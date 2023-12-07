@@ -1,0 +1,176 @@
+---
+title: "Final Project"
+author: "Eliana Li"
+date: "2023-12-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+if(!require(pls)) { install.packages("pls", repos = "http://cran.us.r-project.org"); library(pls) }
+if(!require(caret)) { install.packages("caret", repos = "http://cran.us.r-project.org"); library(caret) }
+if(!require(dplyr)) { install.packages("dplyr", repos = "http://cran.us.r-project.org"); library(dplyr) }
+if(!require(MASS)) { install.packages("MASS", repos = "http://cran.us.r-project.org"); library(MASS) }
+if(!require(stats)) { install.packages("dplyr", repos = "http://cran.us.r-project.org"); library(stats) }
+if(!require(factoextra)) { install.packages("factoextra", repos = "http://cran.us.r-project.org"); library(factoextra) }
+```
+
+Introduction
+This section presents a comprehensive analysis of Principal Component Analysis (PCA) outcomes with a specific focus on dimensionality reduction and multicollinearity mitigation. PCA, a widely recognized technique for high-dimensional data simplification, was employed to address concerns associated with overfitting in predictive modeling. This analysis is dedicated to detailing the application of PCA and its consequent findings.
+
+Methodology
+The PCA analysis was conducted with the primary objective of comprehending the inherent structure of the dataset and discerning the principal components responsible for capturing the most substantial variance within the data. To facilitate subsequent predictive modeling, a division of the original dataset into distinct training and testing sets was enacted to forestall any inadvertent information contamination during model training.
+
+
+```{r}
+data <- read.csv("h1n1_data.csv")
+
+train <- read.csv("train.csv")
+test <- read.csv("test.csv")
+```
+
+
+
+```{r}
+categorical_columns <- c('age_group', 'education', 'race', 'sex', 'income_poverty', 'marital_status', 'rent_or_own', 'employment_status', 'hhs_geo_region', 'census_msa')  # List all your categorical column names
+
+for(col in categorical_columns) {
+  train[[col]] <- as.numeric(factor(train[[col]]))
+  test[[col]] <- as.numeric(factor(test[[col]]))
+}
+
+trainData_standardized <- scale(train)
+testData_standardized <- scale(test, center = attr(trainData_standardized, "scaled:center"), scale = attr(trainData_standardized, "scaled:scale"))
+```
+
+Apply PCA: 
+
+```{r}
+pca_train <- prcomp(trainData_standardized, center = TRUE, scale. = TRUE)
+summary(pca_train)
+```
+Variance Capture
+The preliminary outcome of the PCA analysis unveils that the initial set of principal components inadequately encapsulated the predominant variance within the data. Despite an initial expectation of retaining 20 principal components, even the inclusion of the first 20 components only accounted for approximately 76% of the total variance in the dataset.
+
+```{r}
+# For a scree plot to visualize the variance explained by each principal component:
+screeplot(pca_train, type="lines")
+
+library(ggplot2)
+
+# Create a data frame of variances
+var_explained <- data.frame(Principal_Component = paste0('PC', 1:length(pca_train$sdev)),
+                            Variance = pca_train$sdev^2 / sum(pca_train$sdev^2))
+
+# Convert Principal_Component to a factor with levels in the correct order
+var_explained$Principal_Component <- factor(var_explained$Principal_Component, 
+                                             levels = paste0('PC', 1:length(pca_train$sdev)))
+
+# Create a scree plot with ggplot2
+ggplot(var_explained, aes(x = Principal_Component, y = Variance)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(x = "Principal Component", y = "Proportion of Variance Explained") +
+  geom_line(aes(group = 1)) +
+  geom_point()
+
+```
+
+
+
+```{r}
+pca_test <- predict(pca_train, newdata = testData_standardized)
+summary(pca_test)
+
+fviz_eig(pca_train)
+```
+
+```{r}
+# Assuming 'pca_result' is a data frame containing the PCA scores for each principal component
+# Example: pca_result <- data.frame(PC1 = rnorm(100), PC2 = rnorm(100, sd = 0.7), ...)
+boxplot(pca_train, main="Boxplot of PCA Components", 
+        ylab="Value", xlab="Principal Component", 
+        notch=FALSE, varwidth=TRUE, 
+        col=(c("gold","darkgreen")))
+
+# Creating a boxplot for the PCA components
+boxplot(pca_test, main="Boxplot of PCA Components", 
+        ylab="Value", xlab="Principal Component", 
+        notch=FALSE, varwidth=TRUE, 
+        col=(c("gold","darkgreen")))
+
+```
+
+
+  In the training set, by PC20, the cumulative variance explained is about 76.106%. This is a significant amount and a good balance point between retaining important features and reducing dimensionality.
+  The decision on the number of components to retain is based on the training set's PCA. The test set's PCA results are used to project the test data into the same PCA space defined by the training set.
+The summary statistics for each PC in the test set (like mean, min, max) are useful for understanding how the test data align with these components but don't influence the decision on how many components to retain.
+  A common practice is to select enough PCs to account for around 70-95% of the variance. With 76.106% at PC20, you are within this range.
+Therefore, retaining the first 20 PCs would be a reasonable choice for both your training and test sets. This ensures that most of the variance is captured while avoiding overfitting and excessive complexity.
+  Extract the first 20 PCs from both the PCA results on your training set and the PCA-transformed test set.
+  This decision balances the need to capture a significant portion of the information in the data while avoiding the inclusion of too many components, which might lead to overfitting and increased computational complexity.
+
+```{r}
+set.seed(244)
+train.kmeans <- kmeans(train, 3, nstart = 20)
+```
+
+
+
+```{r}
+# Assuming pca_result contains your PCA results
+fviz_pca_biplot(pca_train, 
+                geom = c("point"), # Use both points and arrows
+                pointsize = 0.1, # Set the point size to a small value
+                addEllipses = FALSE, # Optional: Don't add ellipses
+                col.var = "contrib", # Color arrows by their quality of representation
+                col.ind = "#BBBBBB" # Set a light grey color for the points
+               )
+
+```
+
+K-Means Clustering:
+
+```{r}
+types <- train[,'vaccination_status']
+predictions <- train[ ,-35]
+```
+
+```{r}
+pca_data <- as.data.frame(pca_train$x[, 1:10])
+pca_data$types <- types
+ggplot(pca_data, aes(x = PC1, y = PC2, color = types)) +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "PCA of Data",
+       x = "PC1",
+       y = "PC2",
+       color = "vaccination")
+
+ggplot(pca_data, aes(x = PC1, y = PC3, color = types)) +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "PCA of Data",
+       x = "PC1",
+       y = "PC3",
+       color = "vaccination")
+
+ggplot(pca_data, aes(x = PC2, y = PC3, color = types)) +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "PCA of Data",
+       x = "PC2",
+       y = "PC3",
+       color = "vaccination")
+```
+Two-Dimensional Visualization
+To glean deeper insights into the relationships intrinsic to the principal components, an analysis was directed towards the top three principal components, followed by the creation of pairwise plots for visualization purposes. This representation, existing in a two-dimensional plane, conferred a lucid perspective on intricate patterns, clustering tendencies, and associative correlations that remain inconspicuous in the original high-dimensional feature space.
+
+Interpretation of Two-Dimensional Visualization
+The visual representation of data points across the various combinations of principal components revealed extensive dispersion, denoting the effective capture of a significant degree of data variance by these components. However, a conspicuous absence of clearly discernible clusters emerged. This conspicuous absence suggests that the variable 'vaccination' does not delineate distinct partitions within this representation.
+
+In lieu of conspicuous clustering, an observance of gradual color transitions is noteworthy, with lighter hues (representative of lower vaccination levels) aggregating towards the bottom left quadrant of the plot. This continuous, gradual transition underscores the absence of complete segregation among the diverse levels of 'vaccination' within the genetic expression space defined by the first three principal components.
+
+It is pertinent to highlight that the relationship between the principal components and the 'vaccination' variable exhibits greater prominence in the comparison of PC1 and PC2, in contrast to other principal component pairings. This observation underscores the potential prominence of PC1 and PC2 in connection with vaccination levels.
+
+

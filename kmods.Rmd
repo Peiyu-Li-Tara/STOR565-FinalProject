@@ -1,0 +1,90 @@
+---
+title: "Final_Kmodes"
+output: html_document
+date: "2023-11-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+library(klaR)
+library(cluster)
+
+data <- read.csv("h1n1_data.csv")
+data <- data[, -1]
+data <- data[, !names(data) %in% c("seasonal_vaccine", "h1n1_vaccine", "vaccination_status")]
+
+
+data[] <- lapply(data, function(x) {
+  if (is.numeric(x)) {
+    factor(ifelse(is.na(x), "Missing", as.character(x)))
+  } else {
+    factor(ifelse(is.na(x), "Missing", x))
+  }
+})
+
+
+Csilhouette <- function(data, k) {
+  cluster_assignment <- kmodes(data, k)$cluster
+  silhouette_width <- silhouette(cluster_assignment, dist(data, method = "binary"))
+  mean(silhouette_width[, 3])
+}
+
+
+k_values <- 3:10
+silhouette_values <- sapply(k_values, function(k) Csilhouette(data, k))
+silhouette_values
+
+best_k <- k_values[which.max(silhouette_values)]
+best_k
+```
+```{r}
+kmodes_result <- kmodes(data, 3)
+kmodes_result$size
+kmodes_result$mode
+```
+```{r}
+modes <- kmodes_result$mode
+
+common_variables <- which(apply(modes, 2, function(x) length(unique(x)) == 1))
+
+common_modes <- modes[1, common_variables]
+names(common_modes)
+```
+
+## Report
+Our objective in this study was to uncover patterns in a dataset centered around H1N1 awareness and vaccination behaviors. We opted for k-modes clustering, a method well-suited for categorical data, to discern distinct groups within the population based on their responses and characteristics.
+
+The initial dataset was rich in categorical variables, spanning demographic details and behavioral responses linked to H1N1. In preparing for clustering, we undertook several modifications:
+
+1. We removed the 'seasonal_vaccine', 'h1n1_vaccine', and 'vaccination_status' columns to avoid any bias in the formation of clusters.
+2. The first column, appearing to be an identifier, was excluded.
+3. We converted all numerical columns to categorical formats, aligning them with the requirements of k-modes clustering.
+
+Utilizing the klaR package in R, we performed k-modes clustering across a range of potential cluster numbers, from 3 to 10. The optimal number of clusters was determined based on the average silhouette width, a measure of how well an object fits within its cluster relative to other clusters. 
+
+Initially, we considered a cost function analysis for selecting the optimal number of clusters. This function measures the dissimilarities of objects to their nearest cluster modes. However, this approach was set aside due to:
+
+1. Computational Complexity: The computation of the cost function across various k values proved to be highly demanding, especially considering the size and complexity of our dataset.
+2. Ambiguity in Interpretation: We found that the cost function tended to decrease with more clusters, lacking a clear 'elbow' point, which made selecting the optimal k somewhat subjective and potentially misleading.
+
+Consequently, we selected k=3 based on silhouette scores, leading to the identification of three distinct groups in our dataset. Notably, 17 variables exhibited the same mode across all clusters:
+
+[h1n1_knowledge, behavioral_antiviral_meds, behavioral_avoidance, behavioral_face_mask, behavioral_wash_hands, behavioral_large_gatherings, behavioral_outside_home, behavioral_touch_face, chronic_med_condition, child_under_6_months, health_worker, health_insurance, opinion_seas_sick_from_vacc, race, sex, rent_or_own, hhs_geo_region, household_children]
+
+The uniformity in these variables across diverse groups reveals that specific beliefs, behaviors, and demographic traits are common among various population segments:
+
+1. Knowledge and Behavioral Practices: The consistency in variables such as 'h1n1_knowledge', 'behavioral_antiviral_meds', and 'behavioral_avoidance' across all clusters indicates a widespread awareness and adoption of similar health practices, irrespective of the cluster. This trend is a positive sign from a public health standpoint.
+
+2. Health Conditions and Worker Status: Uniformity in 'chronic_med_condition', 'health_worker', and 'child_under_6_months' suggests these health-related characteristics are evenly distributed across the population, possibly reflecting broader population trends or effective health communication.
+
+3. Socio-Demographic Factors: The consistent distribution of 'race', 'sex', 'rent_or_own', and 'hhs_geo_region' across clusters suggests that these demographic factors do not significantly influence cluster formation. This indicates a uniform impact or response to H1N1 that crosses demographic lines.
+
+4. Health Perceptions and Insurance: The general agreement in views on 'health_insurance' and 'opinion_seas_sick_from_vacc' across clusters may reflect a shared public sentiment about health insurance and vaccine perceptions.
+
+
+```
+

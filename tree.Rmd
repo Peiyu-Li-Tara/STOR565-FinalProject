@@ -1,0 +1,198 @@
+---
+title: "final project"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+h1n1 <-read.csv("~/Desktop/h1n1_data.csv", header=TRUE) 
+train <-read.csv("~/Desktop/train.csv", header=TRUE) 
+test <-read.csv("~/Desktop/test.csv", header=TRUE) 
+head(h1n1)
+head(train)
+```
+
+# split the data in each cluster
+
+for status=1
+```{r}
+set.seed(123)
+h1n1_1 <- subset.data.frame(h1n1, h1n1$vaccination_status == 1)
+train_ind <- sample(1:nrow(h1n1_1), nrow(h1n1_1) * 3 / 4)
+train_1 <- h1n1_1[train_ind,]
+test_1 <- h1n1_1[-train_ind,]
+head(train_1)
+```
+
+for status=2
+```{r}
+h1n1_2 <- subset.data.frame(h1n1, h1n1$vaccination_status == 2)
+train_ind_2 <- sample(1:nrow(h1n1_2), nrow(h1n1_2) * 3 / 4)
+train_2 <- h1n1_2[train_ind_2,]
+test_2 <- h1n1_2[-train_ind_2,]
+```
+
+for status=3
+```{r}
+h1n1_3 <- subset.data.frame(h1n1, h1n1$vaccination_status == 3)
+train_ind_3 <- sample(1:nrow(h1n1_3), nrow(h1n1_3) * 3 / 4)
+train_3 <- h1n1_3[train_ind_3,]
+test_3 <- h1n1_3[-train_ind_3,]
+```
+
+for status=4
+```{r}
+h1n1_4 <- subset.data.frame(h1n1, h1n1$vaccination_status == 4)
+train_ind_4 <- sample(1:nrow(h1n1_4), nrow(h1n1_4) * 3 / 4)
+train_4 <- h1n1_4[train_ind_4,]
+test_4 <- h1n1_4[-train_ind_4,]
+```
+
+merge the train and test
+```{r}
+train_set <- rbind(train_1,train_2,train_3,train_4)
+test_set <- rbind(test_1,test_2,test_3,test_4)
+
+train_all <- train_set %>% sample_n(1000, replace = T)
+test_all <- test_set %>% sample_n(1000, replace = T)
+head(train_all)
+```
+
+
+Classification Tree
+
+The forth model we would like to use is the tree-based method. It is a fundamental component of tree-based methods in machine learning, are powerful tools for making predictions and decisions based on patterns in data. Rooted in the concept of decision tree learning, classification trees are used to classify the dataset by visually interpret from the root to a leaf node, each node representing a decision based on a specific feature of the data. One of the key strengths of classification trees is their interpretability. Unlike many complex models, they offer a clear visualization of the decision paths, which can be easily understood even by those without a deep technical background in machine learning. Now, we mainly focus on the basic classification tree to get our the first glimpse of the data.
+
+#Fit a tree to the training data
+```{r}
+library(tree)
+library(rpart)
+library(rpart.plot)
+tree_mod <- rpart(factor(vaccination_status)~ .- seasonal_vaccine - h1n1_vaccine, data=train_all, method="class", minsplit = 3, minbucket=1)
+```
+
+```{r}
+rpart.plot(tree_mod)
+```
+Opinion_seas_risk is the most important shelves, and it's the first split. There is no class 3, so there is potential problem of unbalanced class. By default, rpart() function uses the Gini impurity measure to split the note. At the top, it is the overall probability of choosing neither get h1n1_vaccine nor seasonal_vaccine. It shows the proportion of individuals that does not received any vaccines (44%). The first node asks whether the individual receive recommendation of the doctors about seasonal vaccine. If yes, then go down to the root’s left node. 56% of the total individuals didn’t received doctor's recommendation of the seasonal flu vaccine and falls into this node, which results that their vaccination_status is 1. For 13% of the individuals who has positive opinions on the risk of flu seasonal vaccines, as well as receive the doctor's recommendation, there are 6% of them due to lack of recommendation of h1n1_vaccine choosing only to receive seaonal vaccines(vaccination_status=2). For 7% of them receive the recommendation for both seasonal vaccine and h1n1 vaccine, age between 18-54(4%) tend to choose only receive seasonal vaccine, and teenagers and elder(3%) tend to choose receive both two vaccines for better protection.
+
+Similar interpretation can be applied to other nodes and decipher the plot. To sum up, the splitting features of this classification tree firstly comes to people's own opinion of the risk of the vaccines. Then, doctor's recommendation plays a crucial role. For people believe the effectiveness of vaccines, if doctor recommends one specific vaccine, the person will choose to receive that vaccine(if they are in the age range between 18 and 54). For people feels the risk of seasonal vaccines is high, they will firstly listen to doctor's recommendation of the h1n1 vaccine, and then combine with their own age and educational background to decide whether to receive any kind of vaccines or both. Interestingly, there are no group 3 in the final classification, meaning no people would like to only receive the h1n1_vaccine, so there may exist an unbalanced classification issue. 
+
+
+
+```{r}
+tree_pred = predict(tree_mod, data = train_all, type = "class")
+table(train_all$vaccination_status, tree_pred)
+(362+116+0+185) / (362+116+0+185+33+43+91+59+27+5+14+46+19)
+```
+The accuracy on the train data is 66.3%. Now, let's repeat the process on the test data, and see the overall prediction the classification tree does on the test set.
+
+```{r}
+tree_test = predict(tree_mod, test_all , type = "class")
+table(test_all$vaccination_status, tree_test)
+(363+91+171)/(363+91+171+29+48+2+104+46+35+3+12+75+21)
+```
+The accuracy on the test data is 62.5%, and the test error rate is 37.5%.The test error rate doesn't perform well enough in this case, so we need to use more methods to improve the performance. Now, let's focus on the prune methods to see if we can achieve a lower test error rate.
+
+#Prune method
+Pruning is a technique used to reduce the complexity of classification trees and prevent overfitting. It involves trimming down the branches of the tree that contribute little to its predictive power. Pruning helps in achieving a balance between model complexity and predictive accuracy, leading to more generalized and efficient classification trees.
+```{r}
+set.seed(123)
+tree_mod <- tree(factor(vaccination_status)~ .- seasonal_vaccine - h1n1_vaccine, data=train_all, method="class")
+prune_mod <- cv.tree(tree_mod, FUN = prune.misclass)
+prune_mod
+optimal_size <- prune_mod$size[which.min(prune_mod$dev)]
+optimal_size
+```
+From the cv.tree() method, we can obtain the optimal size of the nodes. In order to get a more readable experience about how pruning can help us to decrease the cross-validation error rate, let's create a plot to see which node has the lowest CV error.
+
+
+```{r}
+plot(prune_mod$size, prune_mod$dev, type="b",xlab="Tree Size", ylab="Cross-validated Classification Error Rate",)
+```
+From both the cv.tree method and the plot, we can conclude that best tree size is 7. Now, let's build the best model for this section in order to access the overall performance on the h1n1 data.
+
+```{r}
+op_mod <- prune.tree(tree_mod, best = 7)
+summary(op_mod)
+```
+The train error for pruned tree is 0.386, which is bigger than unpruned tree(train error is 0.337). This scenario may be that pruning a tree involves cutting back on its branches, which reduces the complexity of the model. An unpruned tree, with more branches and depth, can capture more details and nuances in the training data, including noise and outliers. This detailed fitting results in lower training error.
+
+The second possible reason is that the overfitting in the data is not obvious, so pruning doesn't help improve the data. An unpruned tree tends to overfit the training data. Overfitting occurs when a model is too closely tailored to the specific dataset it was trained on, including its errors and irregularities. While this leads to a lower error on the training set, it often results in poorer performance on unseen data. Pruning mitigates this by removing parts of the tree that are overly specific to the training data, thus increasing the training error but potentially improving the model's generalization ability.
+
+To have a better understanding of the pruned model, let's focus on the test data to see its performace. 
+
+
+
+```{r}
+prune_pred <- predict(op_mod, test_all, type="class")
+table(test_all$vaccination_status,prune_pred)
+(364+91+174) /(364+91+174+29+49+97+53+33+3+14+72+21)
+```
+The accuracy of the pruned tree on test data is 62.9%, and the test error rate is 37.1%, which was slightly smaller than unpruned tree,this generally indicates a successful pruning process.Pruning helps in reducing overfitting, which is a common issue with unpruned trees. An unpruned tree might fit too closely to the training data, including its noise and outliers, leading to poor generalization. A pruned tree, by removing less significant branches, avoids this pitfall and thus performs better on unseen test data. Besides, by simplifying the tree, pruning eliminates complex structures that are specific to the training set but irrelevant for prediction. This leads to better performance on the test set.
+
+
+
+# Bagging and Random Forest
+To further improve our model, now we swtich to the bagging method.Bagging is powerful ensemble learning technique in machine learning used to improve the stability and accuracy of machine learning algorithms.The core concept of bagging is to create multiple versions of a predictor and use these to get an aggregated predictor. The methodology involves randomly selecting subsets of the training dataset with replacement, training a model on each subset, and then combining their predictions. This combination is typically done by voting for classification and averaging for regression.
+
+We firstly concentrate on the bagging model, which use all the predictors (m=p) in this scenario.
+
+```{r}
+library(randomForest)
+library(caret)
+set.seed(123)
+bag_mod <- randomForest(factor(vaccination_status)~ . - seasonal_vaccine - h1n1_vaccine, data=train_all)
+print(bag_mod)
+
+pred_bag <- predict(bag_mod, newdata = test_all)
+cm_bag <- table(test_all$vaccination_status, pred_bag)
+print(cm_bag)
+test_error <- 1 - sum(diag(cm_bag)) / sum(cm_bag)
+print(paste("Test error: ", round(test_error, 4)))
+
+important <- importance(bag_mod)
+varImpPlot(bag_mod)
+```
+Test error for bagging model is 0.311, which was smaller than pruned tree. Compared to the classification tree constructed earlier, the bagging method gives us a classification method that has a better performance. Since we are combining multiple classification trees together, it’s important to take a look at the importance of each variables.From the importance plot, we can see that opinion_seas_risk is the most important shelves. As following, opinion_seas_vacc_effective, geography region, opinion_h1n1_risk and age group are the other four most important factors.
+
+Does picking a subset of predictors improve the overall performance? Let's move to the random forest method, which will only use a subset of p to further increase the performance. This approach not only aggregates predictions from multiple trees but also introduces more randomness by selecting a subset of features for splitting nodes, further enhancing the model's performance and robustness. Also, random forest can decorrelate the predictors which are highly correlated to each other, which can not be provided only through the bagging model.Moreover, Random Forest models are relatively easy to tune and often perform well with default settings, making them accessible to both novice and experienced practitioners.
+
+
+Now, let's tune the model to select the best number of predictors selected, and try to see its performance.Here, I use number of trees to be 500, step factor to be 0.1, and improve to be 0.005.
+```{r}
+set.seed(123)
+t <- tuneRF(x=train_all[,1:34], y=train_all[,37],
+       stepFactor = 0.1,
+       plot = TRUE,
+       ntreeTry = 500,
+       trace = TRUE,
+       improve = 0.005)
+```
+From the tuning plot, it shows that when the number of predictors to be 11(mtry=11), the OOB error will be the smallest. Now, let us use the new predictor number to test the overall performance.
+
+```{r}
+set.seed(123)
+b_mod <- randomForest(factor(vaccination_status)~ . - seasonal_vaccine - h1n1_vaccine, data=train_all, mtry=11)
+print(b_mod)
+
+pred_b <- predict(b_mod, newdata = test_all)
+cm_b <- table(test_all$vaccination_status, pred_b)
+print(cm_b)
+test_error_b <- 1 - sum(diag(cm_b)) / sum(cm_b)
+print(paste("Test error for random forest: ", round(test_error_b, 4)))
+
+
+importance_b <- importance(b_mod)
+varImpPlot(b_mod)
+```
+The test error for random forest is 0.31, which is slightly smaller than bagging method.The mtry parameter, which determines the number of features considered for splitting at each node, plays a crucial role in the model's ability to capture relevant patterns without overfitting.This slight decrease in test error signifies that the model has achieved a better balance between bias and variance. By selecting the optimal mtry to be 11, we've effectively managed to enhance the model's generalization capabilities, enabling it to perform more accurately on unseen data. 
+
+From the importance plot,we can see that opinion_seas_risk is still the most important predictors of the choice of vaccines.
+
+
+
+
+
+
+
