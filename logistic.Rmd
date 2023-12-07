@@ -1,0 +1,368 @@
+---
+title: "STOR 565 Project Proposal"
+author: "Peiyu Li, Zihan Chu, Eliana Li, Xiong xiong"
+date: "2023-10-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r lib, warning=F}
+library(haven)
+library(rpart)
+library(rpart.plot)
+library(dplyr)      
+library(e1071)       
+library(caret)       
+library(ipred)
+library(ggplot2)
+library(kableExtra)
+library(gbm)
+library(gridExtra)
+library(grid)
+library(lattice)
+library(tidyverse)
+library(glmnet)
+library(randomForest)
+library(pROC)
+library(reshape2)
+library(nnet)
+library(tidyr)
+```
+
+## Group Members
+Peiyu Li, Zihan Chu, Eliana Li, Xiong xiong
+
+## Problem Interest
+The aim of this project is to predict whether the individuals are to receive their H1N1 flu vaccine and seasonal flu vaccine. Also we want to determine the likelihood of an individual vaccinated against H1N1 and seasonal virus. We want to investigate different social, economic, and demographic characteristics are associated with the vaccination patterns. Finally, we want to discuss what are the top factors that affect our prediction or evaluation result.
+
+## Data
+```{r data, include=F}
+raw_data <- read.csv("merged.csv")
+h1n1_data <- na.omit(raw_data) %>%
+  select(-respondent_id) %>%
+  mutate(vaccination_status = case_when(
+    seasonal_vaccine == 0 & h1n1_vaccine == 0 ~ "1",
+    seasonal_vaccine == 1 & h1n1_vaccine == 0 ~ "2",
+    seasonal_vaccine == 0 & h1n1_vaccine == 1 ~ "3",
+    seasonal_vaccine == 1 & h1n1_vaccine == 1 ~ "4",
+    TRUE ~ NA_character_  # for any other combination
+  )) %>%
+  select(-h1n1_vaccine, -seasonal_vaccine)
+
+h1n1_data$vaccination_status <- as.factor(h1n1_data$vaccination_status)
+# write.csv(h1n1_data, "h1n1_data.csv")
+```
+
+```{r}
+con=table(SeasonalVaccine=raw_data$seasonal_vaccine, H1N1Vaccine=raw_data$h1n1_vaccine)
+
+con %>%
+  kbl(caption = "Number of Obs") %>%
+  add_header_above(c(" ", "H1N1 Vaccine" = 2))%>%
+  kable_classic(full_width = F, html_font = "Cambria")%>%
+  kable_styling(latex_options = "HOLD_position")
+
+mosaicplot(con, main="", color="darkgray")
+```
+
+```{r}
+con.doc_recc=table(DoctorRecommend=h1n1_data$doctor_recc_h1n1, VaccineStatus=h1n1_data$vaccination_status)
+mosaicplot(con.doc_recc, main="")
+
+con.opinion.risk=table(H1N1Concern=h1n1_data$opinion_h1n1_risk, VaccineStatus=h1n1_data$vaccination_status)
+mosaicplot(con.opinion.risk, main="")
+
+con.opinion.risk=table(SeasonalConcern=h1n1_data$opinion_seas_risk, VaccineStatus=h1n1_data$vaccination_status)
+mosaicplot(con.opinion.risk, main="")
+
+con.opinion.effect=table(OpinionEffective=h1n1_data$opinion_h1n1_vacc_effective, VaccineStatus=h1n1_data$vaccination_status)
+mosaicplot(con.opinion.effect, main="")
+```
+
+```{r}
+
+ggplot(h1n1_data, aes(x = as.factor(doctor_recc_h1n1), fill = as.factor(vaccination_status)))+ 
+  geom_bar(position = "fill")+
+  labs(x = "doctor_recc_h1n1", y = "Proportion")+
+  scale_fill_brewer(palette = "YlGnBu")
+
+ggplot(h1n1_data, aes(x = as.factor(doctor_recc_seasonal), fill = as.factor(vaccination_status)))+ 
+  geom_bar(position = "fill")+
+  labs(x = "doctor_recc_seasonal", y = "Proportion")+
+  scale_fill_brewer(palette = "YlGnBu")
+
+ggplot(h1n1_data, aes(x = as.factor(opinion_h1n1_risk), fill = as.factor(vaccination_status)))+ 
+  geom_bar(position = "fill")+
+  labs(x="opinion_h1n1_risk", y = "Proportion")+
+  scale_fill_brewer(palette = "YlGnBu")
+
+ggplot(h1n1_data, aes(x = as.factor(opinion_seas_risk), fill = as.factor(vaccination_status)))+ 
+  geom_bar(position = "fill")+
+  labs(x = "opinion_seas_risk", y = "Proportion")+
+  scale_fill_brewer(palette = "YlGnBu")
+```
+
+The [dataset](https://www.cdc.gov/nchs/nis/data_files_h1n1.htm) for this project comes from the National 2009 H1N1 Flu Survey (NHFS). The dataset includes 26707 observations and 38 distinct variables, all of which are categorical or ordinal variables. Our group decided to use this dataset because of the rich observations (26K) which covers a broad scope of predictive variables (demographic, social, economic, etc.) We are intrigued by the question of what factors contribute to the personal preference about the H1N1 vaccination and seasonal flu vaccination. There are two target variables we want to focus:
+* `h1n1_vaccine` - Whether response received H1N1 flu vaccine.
+* `seasonal_vaccine` - Whether respondent received seasonal flu vaccine.
+Both are binary variables: `0` = No; `1` = Yes.
+
+## Approaches
+### Ridge Regression
+We chose Ridge Regression, a penalized regression model, as one of the supervised methods. The penalized regression method keeps all the predictor variables in the model but regularizes the regression coefficients by shrinking them
+toward zero. Ridge Regression is a penalized regression approach that forces many components estimates to 0. That is, Logistic Ridge Regression works well with a large number of predictor variables because it can help us eliminate the unnecessary ones.
+```{r split}
+# # smp_size <- floor(0.7*nrow(h1n1_data))
+# # 
+# # set.seed(123)
+# # train_index <- sample(seq_len(nrow(h1n1_data)), size=smp_size)
+# # 
+# # h1n1_train <- h1n1_data[train_index, ]
+# # h1n1_test <- h1n1_data[-train_index, ]
+# 
+# # Split the dataset into four subsets based on "vaccination_status"
+# subset_1 <- subset(h1n1_data, vaccination_status == "1")
+# subset_2 <- subset(h1n1_data, vaccination_status == "2")
+# subset_3 <- subset(h1n1_data, vaccination_status == "3")
+# subset_4 <- subset(h1n1_data, vaccination_status == "4")
+# 
+# # Define the split ratios for training and test sets
+# split_ratio <- 0.7
+# 
+# # Split each subset into training and test sets
+# set.seed(123)  # for reproducibility
+# subset_1_indices <- sample(1:nrow(subset_1), size = floor(split_ratio * nrow(subset_1)))
+# subset_2_indices <- sample(1:nrow(subset_2), size = floor(split_ratio * nrow(subset_2)))
+# subset_3_indices <- sample(1:nrow(subset_3), size = floor(split_ratio * nrow(subset_3)))
+# subset_4_indices <- sample(1:nrow(subset_4), size = floor(split_ratio * nrow(subset_4)))
+# 
+# h1n1_train <- rbind(subset_1[subset_1_indices, ], subset_2[subset_2_indices, ], subset_3[subset_3_indices, ], subset_4[subset_4_indices, ])
+# 
+# # write.csv(h1n1_train, "train.csv")
+# 
+# h1n1_test <- rbind(subset_1[-subset_1_indices, ], subset_2[-subset_2_indices, ], subset_3[-subset_3_indices, ], subset_4[-subset_4_indices, ])
+# 
+# # write.csv(h1n1_train, "test.csv")
+```
+
+```{r}
+h1h1_train <- read.csv("/Users/peiyuli/Desktop/STOR 565/Final Project/train.csv")
+h1h1_test <- read.csv("/Users/peiyuli/Desktop/STOR 565/Final Project/test.csv")
+```
+
+```{r}
+h1n1_train %>%
+  group_by(vaccination_status) %>%
+  summarize(count = n(),
+            percent = count / 9452)
+
+h1n1_test %>%
+  group_by(vaccination_status) %>%
+  summarize(count = n(),
+            percent = count / 4054)
+```
+
+```{r ridge, warning=F}
+h1n1_train.x <- model.matrix(vaccination_status ~ ., h1n1_train)
+set.seed(1)
+lambdas.ridge <- seq(0, 0.05, by = .0001)
+mod.ridge <- cv.glmnet(h1n1_train.x, h1n1_train$vaccination_status, lambda=lambdas.ridge, nfolds=7, alpha=0, family="multinomial", type.multinomial = "grouped")
+plot(mod.ridge, sub="Multicalss Logistic Ridge Regression: log(lambda) vs multinomial deviance")
+```
+
+```{r}
+h1n1_test.x <- model.matrix(vaccination_status ~., h1n1_test)
+pred.ridge <- predict(mod.ridge, newx = h1n1_test.x, s = mod.ridge$lambda.min, type = "class")
+
+Actual <- c(1, 2, 3, 4)
+cbind(Actual, table(pred.ridge, h1n1_test$vaccination_status))%>%
+  as.data.frame.matrix()%>%
+  kbl(caption = "Confusion Matrix of Ridge Classification") %>%
+  add_header_above(c(" " = 1, "Prediction" = 4))%>%
+  kable_classic(full_width = F, html_font = "Cambria")%>%
+  kable_styling(latex_options = "HOLD_position")
+
+error.ridge <- mean(pred.ridge != h1n1_test$vaccination_status)
+
+#Prediction on testing data
+# pred.ridge <- predict(mod.ridge, s = "lambda.min", newx = model.matrix(vaccination_status ~ ., h1n1_test))
+# pred.ridge <- ifelse(pred.ridge >= 0.5, 1, 0)
+# 
+# error.ridge <- sum(pred.ridge != h1n1_test$vaccination_status)/length(h1n1_test$vaccination_status)
+# error.ridge
+```
+
+```{r ridge_table}
+# table(h1n1_test$h1n1_vaccine, pred.ridge)%>%
+#   kbl(caption = "Confusion Matrix of Ridge Classification") %>%
+#   add_header_above(c(" ", "Prediction" = 2))%>%
+#   kable_classic(full_width = F, html_font = "Cambria")%>%
+#   kable_styling(latex_options = "HOLD_position")
+# 
+# Best Ridge regression model
+# best.ridge.mod <- glmnet(h1n1_train.x, h1n1_train$vaccination_status, alpha=0, lambda=mod.ridge$lambda.min, family="multinomial", type.multinomial = "grouped")
+# 
+# a <- as.data.frame(as.matrix(coef(best.ridge.mod)))%>%
+#   rename("Coefficient"=s0)%>%
+#   arrange(desc(abs(Coefficient)))
+# 
+# head(a) %>%
+#   kbl(caption = "Top 5 greatest absolute coefficient values") %>%
+#   kable_classic(full_width = F, html_font = "Cambria")%>%
+#   kable_styling(latex_options = "HOLD_position")
+```
+
+### LASSO
+```{r LASSO}
+set.seed(1)
+lambdas.lasso <- seq(0, 0.05, by = .0001)
+mod.lasso <- cv.glmnet(h1n1_train.x, h1n1_train$vaccination_status, lambda=lambdas.lasso, nfolds=7, alpha=1, family="multinomial", type.multinomial = "grouped")
+plot(mod.lasso)
+```
+
+```{r}
+pred.lasso <- predict(mod.lasso, newx = h1n1_test.x, s = mod.lasso$lambda.min, type = "class")
+
+cbind(Actual, table(pred.lasso, h1n1_test$vaccination_status))%>%
+  as.data.frame.matrix()%>%
+  kbl(caption = "Confusion Matrix of LASSO Classification") %>%
+  add_header_above(c(" " = 1, "Prediction" = 4))%>%
+  kable_classic(full_width = F, html_font = "Cambria")%>%
+  kable_styling(latex_options = "HOLD_position")
+
+error.lasso <- mean(pred.lasso != h1n1_test$vaccination_status)
+error.lasso
+
+#Prediction on testing data
+# pred.lasso <- predict(mod.lasso, s = "lambda.min", newx = model.matrix(h1n1_vaccine ~ ., h1n1_test))
+# pred.lasso <- ifelse(pred.lasso >= 0.5, 1, 0)
+# 
+# error.lasso <- sum(pred.lasso != h1n1_test$h1n1_vaccine)/length(h1n1_test$h1n1_vaccine)
+# error.lasso
+```
+
+```{r lasso_table}
+# table(h1n1_test$h1n1_vaccine, pred.lasso)%>%
+#   kbl(caption = "Confusion Matrix of LASSO Classification") %>%
+#   add_header_above(c(" ", "Prediction" = 2))%>%
+#   kable_classic(full_width = F, html_font = "Cambria")%>%
+#   kable_styling(latex_options = "HOLD_position")
+# 
+# # Best Ridge regression model
+# best.lasso.mod <- glmnet(h1n1_train.x, h1n1_train$h1n1_vaccine, alpha=0, lambda=mod.lasso$lambda.min, family="binomial", standardize = TRUE)
+# 
+# a <- as.data.frame(as.matrix(coef(best.lasso.mod)))%>%
+#   rename("Coefficient"=s0)%>%
+#   arrange(desc(abs(Coefficient)))
+# 
+# head(a) %>%
+#   kbl(caption = "Top 5 greatest absolute coefficient values") %>%
+#   kable_classic(full_width = F, html_font = "Cambria")%>%
+#   kable_styling(latex_options = "HOLD_position")
+```
+
+### Logistic Regression
+
+```{r logistic_regression}
+mod.logistic <- multinom(vaccination_status ~ ., data = h1n1_train)
+pred.logistic <- predict(mod.logistic, h1n1_test, type = "class")
+prob.logistic <- predict(mod.logistic, h1n1_test, type = "prob") 
+```
+
+```{r}
+exp(coef(mod.logistic))
+head(round(fitted(mod.logistic), 2))
+```
+
+```{r}
+library(MASS)
+library(ggeffects)
+```
+
+```{r}
+ggeffect(mod.logistic, terms = "doctor_recc_h1n1") %>%
+    plot()
+ggeffect(mod.logistic, terms = "doctor_recc_seasonal") %>%
+    plot()
+ggeffect(mod.logistic, terms = "opinion_h1n1_risk") %>%
+    plot()
+ggeffect(mod.logistic, terms = "opinion_h1n1_vacc_effective") %>%
+    plot()
+```
+
+```{r}
+boxplot(prob.logistic,
+        xlab = "Class", ylab = "Likelihood",
+        col = c("cornsilk1", "cornsilk2", "cornsilk3", "cornsilk4"))
+
+legend("topright", legend = colnames(prob.logistic), fill = c("cornsilk1", "cornsilk2", "cornsilk3", "cornsilk4"))
+```
+
+```{r}
+cbind(Actual, table(pred.logistic, h1n1_test$vaccination_status))%>%
+  kbl(caption = "Confusion Matrix of Logistic Regression") %>%
+  add_header_above(c(" " = 1, "Prediction" = 4))%>%
+  kable_classic(full_width = F, html_font = "Cambria")%>%
+  kable_styling(latex_options = "HOLD_position")
+
+mean(pred.logistic != h1n1_test$vaccination_status)
+```
+
+### Logistic Principal Component Analysis (Logistic PCA)
+To reduce the dimension of dataset, we can perform a PCR analysis, projecting the observed data into a different axis
+(PCs). In our case, we have 33 predictor variables. Performing a PCR can help us reduce the dimension of the data while keeping most of the variability and patterns.
+
+```{r PCA}
+pca_orig <- prcomp(origData[, c(1:33)], center = TRUE, scale. = TRUE)
+var_perc <- c()
+cum_var_perc <- c()
+pca_orig.var <- pca_orig$sdev ^ 2
+pca_orig.var.sum <- sum(pca_orig.var)
+cum_var_sum <- 0
+for (i in 1:length(pca_orig$sdev)) {
+  var_perc[i] <- pca_orig.var[i] / pca_orig.var.sum
+  cum_var_sum <- cum_var_sum + pca_orig.var[i]
+  cum_var_perc[i] <- cum_var_sum / pca_orig.var.sum
+}
+
+par(mfrow=c(1,2))
+plot(var_perc[1:10], ylab = '% Variances of PCs', main="Fig 5: Percentage of Variance Explained")
+plot(cum_var_perc, ylab = 'Cumulative % Variances', main="Fig 6: Cumulative Variance Explained")
+```
+
+### Classification Tree
+Decision tree algorithms use the training data to segment the predictor space into non-overlapping regions (the nodes
+of the tree). One of the advantages of classification trees is its interpretability. It provides a clear and human-readable representation of decision rules, making it easy to understand how the algorithm is making predictions.Each node is described by a set of rules which are then used to predict new responses. For our classification project, the predicted value for each node is the most common response in the node.
+
+### Classification Tree Boosting
+Boosting is a method to improve the week learners sequentially and increase the model accuracy with a combined model. The idea of boosting classification tree is to let each tree grow using information from previously grown trees. Instead of fitting a single large decision tree, which can potentially overfit the data, in boosting, the tree model learn slowly so that each tree is small, which just a few terminal nodes. Given the current model, we fit a decision tree to the residuals from the previous model as the response. We then add this new decision tree into the fitted function and update the residuals.
+
+## Potential Challenges
+In this project, our dataset has a large number of variables, so it’s crucial to address noise variables in the dataset, which will significantly hinder the model's performance and accuracy. Therefore, we plan to introduce several data cleaning methods to the original dataset and work on a more concise dataset consisting of relevant information to our interest. Our initial thought is to remove outliers, duplicates, irrelevant variables, and error variables containing `NA` features.
+
+Another challenge is to balance model complexity so that we avoid a model fitting the data too closely or under fit the data. Choice of models is also an issue: some models might not be well-suited to handle a large number of observations, requiring careful selection and tuning of models.
+
+helps mitigate multicollinearity among predictor variables, provides a way to handle overfitting by shrinking coefficient estimates towards zero, and can perform well even when the number of predictors is greater than the number of observations.
+
+
+```{r}
+# Load the xtable package
+library(xtable)
+
+# Create a data frame with your data
+data <- data.frame(
+  Method = c("Logistic Regression", "Ridge Logistic Regression", "LASSO Logistic Regression", "Classification Tree"),
+  Error = c(0.3130, 0.3130, 0.3123, 0.326)
+)
+
+# Create an xtable object
+table <- xtable(data)
+
+# Print the LaTeX table code
+kbl(table, caption = "Classification Error of Different Supervised Methods")%>%
+  kable_classic(full_width = F, html_font = "Cambria")%>%
+  kable_styling(latex_options = "HOLD_position")
+```
